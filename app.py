@@ -23,11 +23,11 @@ def fetch(asset,start,end):
     return download(asset,start,end)
 
 @st.cache_data(show_spinner=False)
-def analyze(returns,window,confidence,simulations,seed):
+def analyze(returns,window,confidence,simulations,seed,ewma_lambda=.94,mean_mode="sample"):
     latest=[]; forecasts={}; tests={}
     for method in METHODS:
-        risk=estimate(returns.iloc[-window:],confidence,method,simulations,seed)
-        forecasts[method]=rolling_forecasts(returns,window,confidence,method,simulations,seed)
+        risk=estimate(returns.iloc[-window:],confidence,method,simulations,seed,ewma_lambda,mean_mode)
+        forecasts[method]=rolling_forecasts(returns,window,confidence,method,simulations,seed,ewma_lambda,mean_mode)
         tests[method]=coverage_tests(forecasts[method].breach,confidence)
         latest.append({'Method':method,'VaR':risk.var,'ES':risk.es})
     return pd.DataFrame(latest).set_index('Method'),forecasts,tests
@@ -42,7 +42,10 @@ with st.sidebar:
     position=st.number_input('Position value (USD)',min_value=100.,value=100000.,step=1000.)
     confidence=st.selectbox('Confidence level',[.95,.975,.99],index=2,format_func=lambda x:f'{x:.1%}')
     window=st.number_input('Estimation window (returns)',min_value=30,max_value=2000,value=250,step=10)
-    method=st.selectbox('Displayed model',METHODS)
+    method=st.selectbox('Displayed model',METHODS,format_func=lambda m: m+' — numerical normal check' if m=='Monte Carlo (normal)' else m)
+    with st.expander('EWMA / FHS settings'):
+        ewma_lambda=st.slider('EWMA lambda',.50,.999,.94,.001)
+        mean_mode=st.radio('EWMA / FHS mean',['sample','zero'],horizontal=True)
     with st.expander('Simulation settings'):
         simulations=st.select_slider('Simulation count',[1000,5000,20000,50000,100000],value=20000)
         seed=st.number_input('Random seed',min_value=0,max_value=2**32-1,value=42)
@@ -92,7 +95,10 @@ if synthetic:
 if window*(1-confidence)<10:
     st.info(f'Only {window*(1-confidence):.1f} tail observations expected in each estimation window. Historical tail estimates are coarse; a longer window adds observations but may mix regimes.')
 with st.spinner('Calculating reproducible forecasts and backtests…'):
-    summary,forecasts,tests=analyze(returns,int(window),confidence,int(simulations),int(seed))
+    try:
+        summary,forecasts,tests=analyze(returns,int(window),confidence,int(simulations),int(seed),ewma_lambda,mean_mode)
+    except ValueError as exc:
+        st.error(f'Risk estimation failed: {exc}'); st.stop()
 selected=summary.loc[method]; bt=forecasts[method]; test=tests[method]
 a,b,c,d=st.columns(4)
 a.metric(f'{confidence:.1%} one-day VaR',f'${selected.VaR*position:,.0f}',f'{selected.VaR:.2%} of position',delta_color='off')
@@ -158,12 +164,15 @@ For confidence c, z = Φ⁻¹(c), and sample standard deviation σ (ddof=1):
 - Normal ES = −μ + σφ(z)/(1−c).
 - Historical VaR uses the inverse empirical CDF (order statistic, no linear interpolation).
 - Historical ES integrates the empirical quantile over the worst 1−c fraction. It includes fractional weight on the boundary observation, so tied observations and small samples do not enlarge the intended tail.
+- EWMA normal uses recursive variance with configurable lambda (default 0.94) and sample or zero mean. The window sample variance seeds the recursion.
+- FHS divides each training innovation by its pre-update EWMA volatility, bootstraps residuals with a fixed seed, and rescales by the next-day volatility. Initialization and sample mean use the training window only; filtered residuals are in-sample.
+- Student-t fits location, scale and df by finite-mean constrained MLE (1.01 ≤ df ≤ 1000). Scale differs from standard deviation. Failed fits raise an explicit error. Constant windows use a point-mass limit.
 - Monte Carlo draws normal simple-return losses using the same μ and σ. The normal model permits economically impossible losses above 100%; this is a model limitation, especially for volatile assets.
 
 Returns are calculated only between supplied observations; missing prices are rejected and never filled. Suspicious long-gap returns are excluded. SPY short gaps cannot always be distinguished from holidays; CSV users must verify completeness. Volatility is daily, not annualized. Assets are evaluated on their own calendars and are not merged.
 
 Risk reflects the chosen historical window. Changing regimes, tail dependence, liquidity, fees, slippage, taxes, and model uncertainty can make future losses differ. SPY represents ETF exposure and may differ from the S&P 500 index. These models cover market price risk, not a complete risk framework.''')
-    config={'asset':asset,'source':provenance,'synthetic':synthetic,'requested_start':str(start),'requested_end':str(end),'observed_start':str(prices.index.min().date()),'observed_end':str(prices.index.max().date()),'position_usd':position,'confidence':confidence,'window':window,'simulations':simulations,'seed':seed,'return_convention':'simple','loss_convention':'negative return','excluded_gap_returns':gap_count,'displayed_model':method}
+    config={'asset':asset,'source':provenance,'synthetic':synthetic,'requested_start':str(start),'requested_end':str(end),'observed_start':str(prices.index.min().date()),'observed_end':str(prices.index.max().date()),'position_usd':position,'confidence':confidence,'window':window,'simulations':simulations,'seed':seed,'ewma_lambda':ewma_lambda,'mean_mode':mean_mode,'return_convention':'simple','loss_convention':'negative return','excluded_gap_returns':gap_count,'displayed_model':method}
     combined=pd.concat(forecasts,names=['model','date']).reset_index()
     for col in ['loss','var','es']:
         combined[col+'_usd']=combined[col]*position

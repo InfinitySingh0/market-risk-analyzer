@@ -6,7 +6,7 @@ from statsmodels.stats.proportion import proportion_confint
 from .risk import estimate
 
 
-def rolling_forecasts(returns, window=250, confidence=.99, method='Normal parametric', simulations=20000, seed=42):
+def rolling_forecasts(returns, window=250, confidence=.99, method='Normal parametric', simulations=20000, seed=42, ewma_lambda=.94, mean_mode='sample'):
     if window < 2 or len(returns) <= window:
         raise ValueError('Need more return observations than the estimation window.')
     if not returns.index.is_monotonic_increasing or returns.index.has_duplicates:
@@ -14,7 +14,7 @@ def rolling_forecasts(returns, window=250, confidence=.99, method='Normal parame
     rows = []
     for i in range(window, len(returns)):
         # Fixed seed provides common random numbers, making MC reproducible across windows.
-        risk = estimate(returns.iloc[i-window:i], confidence, method, simulations, seed)
+        risk = estimate(returns.iloc[i-window:i], confidence, method, simulations, seed, ewma_lambda, mean_mode)
         loss = -float(returns.iloc[i])
         rows.append((returns.index[i], returns.index[i-1], loss, risk.var, risk.es, loss > risk.var))
     return pd.DataFrame(rows, columns=['date','training_end','loss','var','es','breach']).set_index('date')

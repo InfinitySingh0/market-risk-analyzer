@@ -105,3 +105,14 @@ Risk estimates depend on the selected window. Regime shifts, tails, liquidity, t
 - Wilson intervals: https://www.statsmodels.org/stable/generated/statsmodels.stats.proportion.proportion_confint.html
 - Kupiec (1995), “Techniques for Verifying the Accuracy of Risk Measurement Models.”
 - Christoffersen (1998), “Evaluating Interval Forecasts.”
+
+## Additional risk models
+
+EWMA normal uses RiskMetrics variance recursion v_(t+1) = λv_t + (1−λ)(r_t−μ)², λ=0.94 by default. The seed is the training window's sample variance. The UI/API support zero mean or sample mean (default sample, preserving translation invariance). The final variance forecasts the next observation. Normal VaR/ES formulas use its square root.
+
+Filtered historical simulation uses pre-update sigma_t to standardize each training innovation, bootstraps these residuals with a fixed seed, and constructs next returns μ+sigma_next×residual. VaR/ES use the existing empirical quantile definitions. Seed and sample mean use the entire training window: these are in-sample filtered residuals, not historical out-of-sample predictions. A zero denominator maps a zero innovation to zero. No observations outside [i-window,i) enter a forecast.
+
+Student-t uses scipy.stats.t.fit with location and scale and a constrained MLE optimizer: 1.01 ≤ df ≤ 1000 ensures finite mean and ES; variance may still be infinite when df ≤ 2. Standardizing inputs and rounding standardized observations to 9 decimal places improves fitting/cache stability. Constant windows use a point-mass limit. Failed fits produce errors rather than silently switching models. For q=t_ppf(c,ν), VaR=−loc+scale×q and ES=−loc+scale×(ν+q²)/(ν−1)×t_pdf(q,ν)/(1−c). The fitted scale is not standard deviation. Unbounded t returns, like normal returns, can imply losses greater than 100%.
+
+Monte Carlo (normal) remains a numerical check of the analytical normal model, not independent distributional evidence. Model-specific EWMA settings are exported with the configuration. All six models use the same simple-return/loss conventions.
+The Student-t df upper bound of 1000 provides a numerical near-normal limit when the likelihood is flat toward infinite df. These are constrained fits, not unrestricted MLE; boundary estimates and small samples should be interpreted cautiously. The standardized scale lower bound is 1e-8.
