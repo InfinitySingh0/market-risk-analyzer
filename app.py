@@ -28,7 +28,7 @@ def analyze(returns,window,confidence,simulations,seed,ewma_lambda=.94,mean_mode
     for method in METHODS:
         risk=estimate(returns.iloc[-window:],confidence,method,simulations,seed,ewma_lambda,mean_mode)
         forecasts[method]=rolling_forecasts(returns,window,confidence,method,simulations,seed,ewma_lambda,mean_mode)
-        tests[method]=coverage_tests(forecasts[method].breach,confidence)
+        tests[method]=coverage_tests(forecasts[method].breach,confidence,forecasts[method].loss,forecasts[method].es)
         latest.append({'Method':method,'VaR':risk.var,'ES':risk.es})
     return pd.DataFrame(latest).set_index('Method'),forecasts,tests
 
@@ -136,10 +136,11 @@ with back_tab:
     st.plotly_chart(fig,width='stretch')
     rows=[]
     for m,t in tests.items():
-        rows.append({'Model':m,'Forecasts':t['observations'],'Breaches':t['breaches'],'Expected':t['expected_breaches'],'Breach rate':t['breach_rate'],'Kupiec p':t['kupiec_p'],'Independence p':t['independence_p']})
+        rows.append({'Model':m,'Forecasts':t['observations'],'Breaches':t['breaches'],'Expected':t['expected_breaches'],'Breach rate':t['breach_rate'],'Kupiec p':t['kupiec_p'],'Independence p':t['independence_p'],'Conditional coverage p':t['conditional_coverage_p'],'Traffic light':t['traffic_light'],'ES tail gap':t['es_tail_gap'],'ES assessment':t['es_test']})
     st.dataframe(pd.DataFrame(rows).set_index('Model'),width='stretch')
     st.caption(f'Wilson 95% interval for selected breach rate: {test["breach_ci_low"]:.2%}–{test["breach_ci_high"]:.2%}. Independence: {test["independence_note"]}')
     st.info(test['warning'])
+    st.caption(test['conditional_coverage_note']+' '+test['traffic_light_note']+' '+test['es_note'])
     st.write('At a 5% test level, p < 0.05 is evidence against the respective null. A larger p-value does not prove adequacy. Tests evaluate VaR; they do not validate Expected Shortfall.')
     if len(breaches):
         st.write(f'Descriptive tail diagnostic: mean realized loss on breach dates **{breaches.loss.mean():.2%}**; mean ES forecast on those same dates **{breaches.es.mean():.2%}**. Selection on breaches and varying forecasts prevent treating this as a formal ES test.')
@@ -178,7 +179,7 @@ Risk reflects the chosen historical window. Changing regimes, tail dependence, l
         combined[col+'_usd']=combined[col]*position
     stresses=pd.concat([historical,hypothetical],ignore_index=True)
     config_csv=pd.DataFrame([config]).to_csv(index=False)
-    files={'forecasts.csv':combined.to_csv(index=False),'breaches.csv':combined[combined.breach].to_csv(index=False),'stress_results.csv':stresses.to_csv(index=False),'configuration.csv':config_csv,'model_comparison.csv':summary.to_csv()}
+    files={'forecasts.csv':combined.to_csv(index=False),'breaches.csv':combined[combined.breach].to_csv(index=False),'stress_results.csv':stresses.to_csv(index=False),'configuration.csv':config_csv,'model_comparison.csv':summary.to_csv(),'backtest_diagnostics.csv':pd.DataFrame(tests).T.rename_axis('model').to_csv()}
     bundle=io.BytesIO()
     with zipfile.ZipFile(bundle,'w',zipfile.ZIP_DEFLATED) as archive:
         for name,content in files.items():archive.writestr(name,content)

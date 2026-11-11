@@ -116,3 +116,11 @@ Student-t uses scipy.stats.t.fit with location and scale and a constrained MLE o
 
 Monte Carlo (normal) remains a numerical check of the analytical normal model, not independent distributional evidence. Model-specific EWMA settings are exported with the configuration. All six models use the same simple-return/loss conventions.
 The Student-t df upper bound of 1000 provides a numerical near-normal limit when the likelihood is flat toward infinite df. These are constrained fits, not unrestricted MLE; boundary estimates and small samples should be interpreted cautiously. The standardized scale lower bound is 1e-8.
+
+## Additional backtesting diagnostics
+
+Christoffersen conditional coverage adds LR_cc = LR_uc + LR_ind with a χ²(2) reference. If independence is not identifiable, conditional coverage is N/A with the same reason. All statistics and reasons are exported in `backtest_diagnostics.csv`.
+
+The educational Basel-style traffic light uses only the last 250 forecasts at 99% confidence. Compute F=BinomialCDF(k;250,0.01): green if F<0.95 (0–4 exceptions), yellow if 0.95≤F<0.9999 (5–9), red otherwise (10+). Other confidence levels or fewer than 250 observations return N/A. This is not regulatory capital validation: forecasts on crypto calendar days, data quality and trading-book eligibility differ from regulatory use.
+
+ES uses the explicitly labeled descriptive fallback: mean realized loss, mean forecast ES, and their difference on VaR-breach dates. No Acerbi–Székely Z2 statistic or simulated p-value is claimed. The p-value field is N/A; absent losses/forecasts or no breaches have explicit reasons. This avoids asserting a formal null distribution for adaptive filtered residuals and fitted tail models. Selection on breaches and small samples limit interpretation; a positive gap is descriptive evidence of tail underestimation, not a significance test.
