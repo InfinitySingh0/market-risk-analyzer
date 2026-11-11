@@ -2,6 +2,7 @@ from datetime import date
 import io
 import json
 import zipfile
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -17,6 +18,31 @@ st.markdown('''<style>
 .stApp {background:#0b1220} [data-testid="stMetric"] {background:#152035;padding:18px;border-radius:10px;border:1px solid #29374c}
 h1 {letter-spacing:-1.4px} .eyebrow {color:#50d7b0;letter-spacing:3px;font-size:12px;font-weight:700}
 </style>''',unsafe_allow_html=True)
+
+def project_manifest(root):
+    import os
+    permitted = {'.py', '.md', '.csv', '.txt', '.toml', '.ini', '.yml', '.yaml', '.png'}
+    files = []
+    for directory, subdirs, names in os.walk(root):
+        subdirs[:] = sorted(d for d in subdirs if d not in {'.venv', '.git', '__pycache__', '.pytest_cache'})
+        for name in sorted(names):
+            path = Path(directory) / name
+            if name == 'secrets.toml' or name.startswith('.env'):
+                continue
+            if path.suffix in permitted or name in {'LICENSE', '.gitignore'}:
+                stat = path.stat()
+                files.append((str(path.relative_to(root)), stat.st_size, stat.st_mtime_ns))
+    return tuple(sorted(files))
+
+
+@st.cache_data(show_spinner=False)
+def build_project_archive(root, manifest):
+    source_bundle = io.BytesIO()
+    with zipfile.ZipFile(source_bundle, 'w', zipfile.ZIP_DEFLATED) as archive:
+        for name, _, _ in manifest:
+            archive.write(Path(root)/name, str(Path('market-risk-analyzer')/name))
+    return source_bundle.getvalue()
+
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch(asset,start,end):
@@ -190,15 +216,13 @@ Risk reflects the chosen historical window. Changing regimes, tail dependence, l
         st.json(config)
     st.divider()
     st.subheader('Project deliverables')
-    from pathlib import Path
     project_root=Path(__file__).resolve().parent
-    source_bundle=io.BytesIO()
-    with zipfile.ZipFile(source_bundle,'w',zipfile.ZIP_DEFLATED) as archive:
-        for path in sorted(project_root.rglob('*')):
-            relative=path.relative_to(project_root)
-            if path.is_file() and not any(part in {'.venv','__pycache__','.pytest_cache','.git'} for part in relative.parts):
-                archive.write(path,str(Path('market-risk-analyzer')/relative))
-    st.download_button('Download complete Python project',source_bundle.getvalue(),'market-risk-analyzer.zip','application/zip')
+    if st.button('Prepare project ZIP'):
+        # Scan only on explicit request; archive construction is cached by file metadata.
+        manifest = project_manifest(project_root)
+        st.session_state['project_archive'] = build_project_archive(str(project_root), manifest)
+    if 'project_archive' in st.session_state:
+        st.download_button('Download complete Python project',st.session_state['project_archive'],'market-risk-analyzer.zip','application/zip')
     report_path=project_root/'reports'/'sample_risk_report.md'
     if report_path.exists():
         st.download_button('Download sample risk report',report_path.read_text(),'sample_risk_report.md','text/markdown')

@@ -4,7 +4,7 @@ A Streamlit portfolio project for market risk analysts: one-day VaR, Expected Sh
 
 ## Run locally
 
-Requires Python 3.11 or newer (tested on Python 3.12).
+Requires Python 3.11 or newer (local validation uses Python 3.12; CI runs 3.11 and 3.12).
 
 ```bash
 python -m venv .venv
@@ -75,7 +75,7 @@ Kupiec: compare Bernoulli likelihood under α against the MLE breach rate k/N. L
 
 Christoffersen independence: compare a two-state first-order Markov likelihood against an iid transition likelihood using n00,n01,n10,n11. LR_ind has an asymptotic χ²(1) reference. If either prior-state row has no observations, return N/A with an explanation rather than implying the model passed. Transition counts are available from the API. Sparse transitions and low expected counts weaken inference; the dashboard highlights fewer than 10 expected breaches. Wilson 95% intervals summarize breach-rate uncertainty.
 
-These are VaR tests, not ES tests. Mean realized loss on breach dates versus mean ES on those dates is only descriptive: selecting on breaches, changing forecasts, and sample size preclude treating it as a formal ES validation.
+Coverage and independence are VaR tests, not ES tests. Mean realized loss on breach dates versus mean ES on those dates is only descriptive: selecting on breaches, changing forecasts, and sample size preclude treating it as a formal ES validation.
 
 No automatic model tuning is performed. Interactive inspection can itself introduce selection bias. For research, decide settings on a training/validation period, then evaluate once on a separately reserved final holdout. Repeatedly changing settings against the same backtest is not an untouched test.
 
@@ -110,7 +110,7 @@ Risk estimates depend on the selected window. Regime shifts, tails, liquidity, t
 
 EWMA normal uses RiskMetrics variance recursion v_(t+1) = λv_t + (1−λ)(r_t−μ)², λ=0.94 by default. The seed is the training window's sample variance. The UI/API support zero mean or sample mean (default sample, preserving translation invariance). The final variance forecasts the next observation. Normal VaR/ES formulas use its square root.
 
-Filtered historical simulation uses pre-update sigma_t to standardize each training innovation, bootstraps these residuals with a fixed seed, and constructs next returns μ+sigma_next×residual. VaR/ES use the existing empirical quantile definitions. Seed and sample mean use the entire training window: these are in-sample filtered residuals, not historical out-of-sample predictions. A zero denominator maps a zero innovation to zero. No observations outside [i-window,i) enter a forecast.
+Filtered historical simulation uses pre-update sigma_t to standardize each training innovation, bootstraps these residuals with a fixed seed, and constructs next returns μ+sigma_next×residual. VaR/ES use the existing empirical quantile definitions. Seed and sample mean use the entire training window: these are in-sample filtered residuals, not historical out-of-sample predictions. A numerically constant FHS window uses its deterministic empirical loss distribution, since residual scaling is undefined. Otherwise a zero denominator maps a zero innovation to zero. No observations outside [i-window,i) enter a forecast.
 
 Student-t uses scipy.stats.t.fit with location and scale and a constrained MLE optimizer: 1.01 ≤ df ≤ 1000 ensures finite mean and ES; variance may still be infinite when df ≤ 2. Standardizing inputs and rounding standardized observations to 9 decimal places improves fitting/cache stability. Constant windows use a point-mass limit. Failed fits produce errors rather than silently switching models. For q=t_ppf(c,ν), VaR=−loc+scale×q and ES=−loc+scale×(ν+q²)/(ν−1)×t_pdf(q,ν)/(1−c). The fitted scale is not standard deviation. Unbounded t returns, like normal returns, can imply losses greater than 100%.
 
@@ -124,3 +124,50 @@ Christoffersen conditional coverage adds LR_cc = LR_uc + LR_ind with a χ²(2) r
 The educational Basel-style traffic light uses only the last 250 forecasts at 99% confidence. Compute F=BinomialCDF(k;250,0.01): green if F<0.95 (0–4 exceptions), yellow if 0.95≤F<0.9999 (5–9), red otherwise (10+). Other confidence levels or fewer than 250 observations return N/A. This is not regulatory capital validation: forecasts on crypto calendar days, data quality and trading-book eligibility differ from regulatory use.
 
 ES uses the explicitly labeled descriptive fallback: mean realized loss, mean forecast ES, and their difference on VaR-breach dates. No Acerbi–Székely Z2 statistic or simulated p-value is claimed. The p-value field is N/A; absent losses/forecasts or no breaches have explicit reasons. This avoids asserting a formal null distribution for adaptive filtered residuals and fitted tail models. Selection on breaches and small samples limit interpretation; a positive gap is descriptive evidence of tail underestimation, not a significance test.
+
+
+## Model comparison findings
+
+Synthetic data only; 2022–2025, 250-return windows, 20,000 draws, seed 42, lambda 0.94, sample mean. The table is generated from `reports/sample_model_results.csv`; full details and descriptive ES diagnostics are in the report/CSV.
+
+| Confidence | Model | Next VaR | Next ES | Breaches / N | Kupiec p | CC p | Traffic light |
+|---|---|---:|---:|---:|---:|---:|---|
+| 95% | Normal parametric | 1.41% | 1.79% | 23/792 | 0.0034 | 0.0069 | N/A |
+| 95% | Historical simulation | 1.29% | 1.61% | 38/792 | 0.7929 | 0.7578 | N/A |
+| 95% | Monte Carlo (normal) | 1.43% | 1.80% | 23/792 | 0.0034 | 0.0069 | N/A |
+| 95% | EWMA normal | 1.39% | 1.77% | 32/792 | 0.2005 | 0.1143 | N/A |
+| 95% | Filtered historical simulation | 1.37% | 1.83% | 40/792 | 0.9481 | 0.7058 | N/A |
+| 95% | Student-t parametric | 1.40% | 1.96% | 30/792 | 0.1026 | 0.0809 | N/A |
+| 99% | Normal parametric | 2.03% | 2.34% | 6/792 | 0.4738 | 0.7390 | green |
+| 99% | Historical simulation | 1.78% | 2.01% | 6/792 | 0.4738 | 0.7390 | green |
+| 99% | Monte Carlo (normal) | 2.04% | 2.34% | 6/792 | 0.4738 | 0.7390 | green |
+| 99% | EWMA normal | 2.01% | 2.32% | 11/792 | 0.2989 | 0.4992 | green |
+| 99% | Filtered historical simulation | 2.19% | 2.32% | 10/792 | 0.4754 | 0.6820 | yellow |
+| 99% | Student-t parametric | 2.28% | 2.92% | 4/792 | 0.1217 | 0.2959 | green |
+
+At 95%, normal VaR has **23/792 breaches** versus **39.6 expected** (Kupiec p=0.0034): coverage is rejected because there are too few exceptions. Historical simulation has **38/792** (p=0.7929), so coverage is not rejected. Normal Monte Carlo has the same breach count as normal analytical in this run. At 99%, normal and historical both have **6/792** (p=0.4738); non-rejection with few exceptions does not prove accurate tail modeling. FHS can have a yellow last-250 traffic light even when its full-history coverage test is not rejected: they examine different samples and thresholds. These findings are sample-specific and do not establish universal model superiority.
+
+## Limitations / not done
+
+- ES is a descriptive fallback, **not** an Acerbi–Székely Z2 implementation; no formal ES p-value is produced.
+- Traffic lights are educational and are not a regulatory compliance or capital calculation.
+- Student-t uses constrained, numerical MLE; df/scale boundaries and finite samples affect estimates. Failed optimization is reported explicitly.
+- FHS uses in-window initialization, a fixed mean and one-step EWMA; it does not estimate asymmetric volatility, leverage effects or time-varying residual shape.
+- Historical estimates at 99% use just 2.5 observations of tail mass with a 250-return window. Bootstrap repetition does not create new tail information.
+- Price-source availability and calendar gap detection remain imperfect. There is no guaranteed exchange-calendar validation or market-data redistribution license.
+- No multi-asset covariance/dependence, derivatives repricing, liquidity model, transaction costs, multi-day VaR scaling, automatic model selection, or formal multiple-testing correction.
+- Local validation is Python 3.12; the added CI matrix is configured for 3.11 and 3.12. Remote CI status must be checked on GitHub.
+
+## Screenshot and Streamlit Community Cloud
+
+![Synthetic demonstration dashboard](docs/screenshot.png)
+
+`docs/screenshot.png` is the sample screenshot slot; replace it with an updated capture as the UI evolves. Metrics shown are synthetic examples.
+
+To deploy on Streamlit Community Cloud, connect this GitHub repository, select the `main` branch and `app.py`, and use Python 3.12. Dependencies are read from `requirements.txt` and theme settings from `.streamlit/config.toml`. No API secrets are needed for offline mode or the optional Yahoo adapter. Community Cloud resource limits and external data-provider access can vary; offline synthetic mode remains available. Initial Student-t rolling fits can take longer than subsequent cached runs. Deployment is a separate user action; adding this note does not deploy the app.
+
+Project ZIPs are prepared only when **Prepare project ZIP** is clicked, then cached by a source-file metadata manifest. A session retains the prepared download until prepared again. Virtual environments, Git history, caches, `.env*` and Streamlit secrets are excluded. CSV analysis downloads remain available independently.
+
+## License
+
+Project code is MIT licensed; see [LICENSE](LICENSE). Third-party packages and market data retain their own licenses and terms.
